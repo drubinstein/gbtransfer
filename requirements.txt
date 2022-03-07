@@ -1,0 +1,6 @@
+torch>=1.6,<1.9
+pyboy
+black
+gym
+torchmetrics>=0.3
+pytorch-lightning>=1.3
