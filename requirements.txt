@@ -1,6 +1,8 @@
-torch>=1.6,<1.9
+torch>=1.10
 pyboy
 black
 gym
 torchmetrics>=0.3
 pytorch-lightning>=1.3
+lightning-bolts
+torchinfo

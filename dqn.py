@@ -6,23 +6,36 @@ import numpy as np
 import torch
 from pytorch_lightning import LightningModule
 from pytorch_lightning.utilities import DistributedType
+from pl_bolts.models.vision import UNet
 from torch import Tensor, nn
 from torch.optim import Adam, Optimizer
 from torch.utils.data import DataLoader
 from torch.utils.data.dataset import IterableDataset
+from torchinfo import summary
 
 # TODO: Make the input and output layer to the sequential arguments
 class DQN(nn.Module):
-    def __init__(self, observation_size: int, n_actions: int, hidden_size: int = 128):
+    def __init__(self, observation_size: int, n_actions: int, hidden_size: int = 1024):
         super(DQN, self).__init__()
+        """
         self.net = nn.Sequential(
             nn.Linear(observation_size, hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, n_actions),
         )
+        """
+        self.net = nn.Sequential(
+          nn.Conv2d(1, 32, kernel_size=4),
+          nn.ReLU(),
+          nn.Conv2d(32, 64, kernel_size=2),
+          nn.ReLU(),
+          nn.Conv2d(64, 64, kernel_size=2),
+          nn.ReLU(),
+          nn.Linear(5, n_actions)
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x.float())
+        return self.net(x.unsqueeze(1).float())
 
 
 # Named tuple for storing experience steps gathered in training
@@ -121,16 +134,17 @@ class Agent:
         if np.random.random() < epsilon:
             action = self.env.action_space.sample()
         else:
-            state = torch.tensor([self.state])
+            state = torch.tensor([self.state.astype(np.int64)])
 
             if device not in ["cpu"]:
                 state = state.cuda(device)
 
             q_values = net(state)
-            # _, action = torch.max(q_values.squeeze(), dim=1)
-            _, action = torch.max(torch.mean(q_values.squeeze(), 0), 0)
             # import pdb
             # pdb.set_trace()
+            # _, action = torch.max(q_values.squeeze(), dim=1)
+            _, action = q_values.max(0)[0].max(0)[0].max(0)[0].max(0)
+            # _, action = torch.max(torch.mean(q_values.squeeze(), 0), 0)
             action = int(action.item())
 
         return action
@@ -157,11 +171,17 @@ class Agent:
 
         # do step in the environment
         new_state, reward, done, _ = self.env.step(action)
+
+        # A little amusing, but the AI will reach a local minima where it realizes
+        # that it can stay on the pause screen without any penalty
+        # This is a little hack to penalize extended time on a pause screen
+        """
         if self.env.pyboy.get_memory_value(0xFFAB):
           self.frames_on_start += 1  
         else:
           self.frames_on_start = 0
-        reward -= 1e-5 * self.frames_on_start
+        reward -= 1e-3 * self.frames_on_start
+        """
 
         exp = Experience(self.state, action, reward, done, new_state)
 
@@ -211,11 +231,13 @@ class DQNLightning(LightningModule):
 
         self.env = env
 
-        obs_size = self.env.observation_space.shape[0]
+        obs_size = self.env.observation_space.shape
         n_actions = self.env.action_space.n
 
         self.net = DQN(obs_size, n_actions)
         self.target_net = DQN(obs_size, n_actions)
+
+        # summary(self.net, input_size=(16, *tuple(list(obs_size))), device="cpu")
 
         self.buffer = ReplayBuffer(self.hparams.replay_size)
         self.agent = Agent(self.env, self.buffer)
@@ -257,7 +279,7 @@ class DQNLightning(LightningModule):
         states, actions, rewards, dones, next_states = batch
 
         state_action_values = (
-            self.net(states).gather(1, actions.unsqueeze(-1).unsqueeze(-1)).squeeze(-1).squeeze(-1)
+            self.net(states).gather(1, actions.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)).squeeze(-1).squeeze(-1).squeeze(-1)
         )
 
         with torch.no_grad():
@@ -265,9 +287,9 @@ class DQNLightning(LightningModule):
             next_state_values[dones] = 0.0
             next_state_values = next_state_values.detach()
 
-        #import pdb
+        # import pdb
         # pdb.set_trace()
-        expected_state_action_values = torch.mean(next_state_values, 1) * self.hparams.gamma + rewards
+        expected_state_action_values = torch.mean(torch.mean(next_state_values, 1), 1) * self.hparams.gamma + rewards
 
         return nn.MSELoss()(state_action_values, expected_state_action_values)
 

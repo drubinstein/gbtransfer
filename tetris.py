@@ -27,7 +27,7 @@ if __name__ == "__main__":
     # tetris = pyboy.game_wrapper()
     # tetris.start_game(timer_div=args.seed) # The timer_div works like a random seed in Tetris
 
-    model = DQNLightning(pyboy.openai_gym("minimal"))
+    model = DQNLightning(pyboy.openai_gym("tiles"))
     trainer = Trainer(gpus=0, max_epochs=20000, val_check_interval=100)
     trainer.fit(model)
 
